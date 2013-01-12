@@ -1,19 +1,72 @@
+from sys import float_info
 
-class NodeType(object):
-    SECTION = 0
-    TERMINAL = 1
+#====================================================
+
+# TODO: Optimize creation
+class Rect(object):
+    INF = None
+    
+    def __init__(self, tpl):
+        if isinstance(tpl, Rect):
+            self._r = tpl._r
+        elif isinstance(tpl, tuple):
+            self._r = tuple(map(float, tpl))
+        else:
+            raise ValueError("Cant create rect from %s" % (tpl))
+        self.validate()
+    
+    def validate(self):
+        if self._r[0] > self._r[2] or self._r[1] > self._r[3]:
+            raise Exception("Invalid rect %s" % (self._r))
+    
+    def contains(self, p):
+        r = self._r
+        return p[0] >= r[0] and p[0] <= r[2] and p[1] >= r[1] and p[1] <= r[3]
+    
+    def __eq__(self, tpl):
+        other = Rect(tpl)
+        for i in range(4):
+            if abs(self._r[i] - other._r[i]) > 0.0001:
+                return False
+        return True
+    
+    def __neq(self, tpl):
+        return not self.__eq__(tpl)
+    
+    def __str__(self):
+        return str(self._r)
+    
+    def __repr__(self):
+        return 'rect'+str(self)
+    
+    def __iter__(self):
+        return iter(self._r)
+    
+    def __getitem__(self, i):
+        return self._r[i]
+
+setattr(Rect, 'INF', Rect((float_info.min, float_info.min, float_info.max, float_info.max)))
 
 #====================================================
 
 class Quater(object):
-    NE = 0
-    SE = 1
-    SW = 2
-    NW = 3
+    """Assumes:
+    Y ^
+      | NW | NE
+      | -- + --
+      | SW | SE
+      +-------->
+               X
+    """
+    
+    SW = 0
+    NW = 1
+    NE = 3
+    SE = 2
     ROOT = 4
     
-    str2quater = { 'NE' : 0, 'SE' : 1, 'SW' : 2, 'NW' : 3, 'ROOT' : 4 }
-    quater2str = ['NE', 'SE', 'SW', 'NW', 'ROOT']
+    str2quater = { 'SW' : 0, 'NW' : 1, 'NE' : 3, 'SE' : 2, 'ROOT' : 4 }
+    quater2str = ['SW', 'NW', 'SE', 'NE', 'ROOT']
     
     @staticmethod
     def toString(q):
@@ -22,174 +75,248 @@ class Quater(object):
     @staticmethod
     def fromString(s):
         return Quater.str2quater[s]
+    
+    @staticmethod
+    def ofArea(rect, q):
+        x0,y0,x1,y1 = tuple(rect)
+        w2 = (x1 - x0) * 0.5
+        h2 = (y1 - y0) * 0.5
+        
+        x0 = x0 + w2 * ((q & 2) >> 1)
+        y0 = y0 + h2 * (q & 1)
+        return Rect( (x0, y0, x0 + w2, y0 + h2) )
 
 #====================================================
 
 class QuadNode(object):
+    LEAF = 0
+    BRANCH = 1
     
-    def __init__(self, tree, t, area, quater, parent):
-        self.Tree = tree
-        self.Type = t
-        self.Area = area
-        self.Quater = quater
-        self.Parent = parent
+    def __init__(self, typ, parent, area):
+        self.type = typ
+        self.parent = parent
+        self.area = area
     
-    def Accept(self, visitor):
-        pass
+    @property
+    def quater(self):
+        return self.parent._quater(self)
 
 #====================================================
 
-class QuadSection(QuadNode):
+class QuadLeaf(QuadNode):
+    def __init__(self, parent, area):
+        QuadNode.__init__(self, QuadNode.LEAF, parent, area)
+        self._items = []
     
-    def __init__(self, tree, area, quater, parent):
-        QuadNode.__init__(self, tree, NodeType.SECTION, area, quater, parent)
-        self.Quaters = None
+    @property
+    def items(self):
+        return self._items
     
-    def isEmpty(self):
-        return self.Quaters is None
+    def insert(self, p, item):
+        assert self.area.contains(p)
+        self._items.append(item)
     
-    def Accept(self, visitor):
-        if visitor.EnterSection(self) and self.Quaters is not None:
-            for q in self.Quaters:
-                q.Accept(visitor)
-        visitor.LeaveSection(self)
+    def split(self):
+        br = QuadBranch(self.parent, self.area)
+        self.parent._wasSplit(self, br)
+        return br
     
-    def Split(self, force_type=None):
-        term = self.Tree.getTerminalSize()
-        area = self.Area
-        w2 = area[2] * 0.5
-        h2 = area[3] * 0.5
-        
-        aNE = (area[0]+w2, area[1], w2, h2)
-        aSE = (area[0]+w2, area[1]+h2, w2, h2)
-        aSW = (area[0], area[1]+h2, w2, h2)
-        aNW = (area[0], area[1], w2, h2)
-        
-        QType = force_type if force_type else (QuadTerminal if (w2 <= term and h2 <= term) else QuadSection)
-        
-        self.Quaters = ( \
-            QType(self.Tree, aNE, Quater.NE, self), \
-            QType(self.Tree, aSE, Quater.SE, self), \
-            QType(self.Tree, aSW, Quater.SW, self), \
-            QType(self.Tree, aNW, Quater.NW, self), \
-            )
+    def accept(self, visitor):
+        visitor.visitLeaf(self)
     
     def __str__(self):
-        return "section [%s] area %s" % (Quater.toString(self.Quater), self.Area)
+        return "leaf [%s] area %s" % (Quater.toString(self.quater), self.area)
 
 #====================================================
 
-class QuadTerminal(QuadNode):
+class QuadBranch(QuadNode):
+    def __init__(self, parent, area):
+        QuadNode.__init__(self, QuadNode.BRANCH, parent, area)
+        self._children = [QuadLeaf(self, Quater.ofArea(area, q)) for q in range(4)]
     
-    def __init__(self, tree, area, quater, parent):
-        QuadNode.__init__(self, tree, NodeType.TERMINAL, area, quater, parent)
-        self.Items = []
+    def _quater(self, node):
+        i = self._children.index(node)
+        assert i >= 0
+        return i
     
-    def Accept(self, visitor):
-        visitor.VisitTerminal(self)
+    def _wasSplit(self, leaf, br):
+        q = self._quater(leaf)
+        self._children[q] = br
+    
+    @property
+    def children(self):
+        return self._children
+    
+    @property
+    def items(self):
+        return (i for c in self._children for i in c.items)
+    
+    def accept(self, visitor):
+        visitor.enterBranch(self)
+        for c in self._children:
+            if c:
+                c.accept(visitor)
+        visitor.leaveBranch(self)
     
     def __str__(self):
-        return "terminal [%s] area %s" % (Quater.toString(self.Quater), self.Area)
+        return "branch [%s] area %s" % (Quater.toString(self.quater), self.area)
+
+#====================================================
+
+class QuadTree(object):
+    def __init__(self, rect=None, getcoord = None, max_items=1000, max_depth=0):
+        self.max_items = max_items
+        self.max_depth = max_depth
+        
+        self._getcoord = getcoord or (lambda x: x)
+        self._root = QuadLeaf(self, Rect(rect) if rect else Rect.INF)
+        self._inserter = InsertionVisitor(self._getcoord, self.max_items, self.max_depth)
+    
+    @property
+    def root(self):
+        return self._root
+    
+    @property
+    def area(self):
+        return self._root.area
+    
+    @property
+    def items(self):
+        return self._root.items
+    
+    @property
+    def depth(self):
+        v = DepthProbeVisitor()
+        self.accept(v)
+        return v.max_depth + 1
+    
+    def insert(self, item):
+        self._inserter.init(item)
+        self.accept(self._inserter)
+        return self._inserter.depth + 1
+    
+    def clear(self):
+        self._root = QuadLeaf(self, self.area)
+    
+    def accept(self, visitor):
+        try:
+            self._root.accept(visitor)
+        except StopIteration:
+            pass
+    
+    def _quater(self, node):
+        assert node == self.root
+        return Quater.ROOT
+    
+    def _wasSplit(self, leaf, br):
+        assert leaf == self._root
+        self._root = br
+    
+    def __str__(self):
+        v = PrinterVisitor()
+        self.accept(v)
+        return v.str
 
 #====================================================
 
 class QuadTreeVisitor(object):
     
-    def EnterSection(self, section):
+    def enterBranch(self, branch):
         return True
     
-    def LeaveSection(self, section):
+    def leaveBranch(self, branch):
         pass
     
-    def VisitTerminal(self, terminal):
+    def visitLeaf(self, leaf):
         pass
 
 #====================================================
 
-
-class QuadTreeInserter(QuadTreeVisitor):
+class DepthProbeVisitor(object):
+    def __init__(self):
+        self.depth = -1
+        self.max_depth = 0
     
-    def __init__(self, item):
-        self.Item = item
-        self.Place = None
+    def enterBranch(self, branch):
+        self.depth += 1
+        return True
     
-    def __inArea(self, area, pos):
-        x = pos[0] - area[0];
-        y = pos[1] - area[1];
-        return x >= 0 and y >= 0 and x < area[2] and y < area[3];
+    def leaveBranch(self, branch):
+        self.depth -= 1
     
-    def EnterSection(self, section):
-        if not self.__inArea(section.Area, section.Tree.Agent(self.Item)):
-            return False
-        elif section.isEmpty():
-            section.Split()
-        return self.Place is None
-    
-    def LeaveSection(self, section):
-        pass
-    
-    def VisitTerminal(self, terminal):
-        if self.__inArea(terminal.Area, terminal.Tree.Agent(self.Item)):
-            terminal.Items.append(self.Item)
-            self.Place = terminal
+    def visitLeaf(self, leaf):
+        self.max_depth = max(self.max_depth, self.depth + 1)
 
 #====================================================
 
-class QuadTreePrinter(QuadTreeVisitor):
+class InsertionVisitor(QuadTreeVisitor):
+    def __init__(self, get_cord, max_items=0, max_depth=0):
+        self.depth = -1
+        self.item = None
+        
+        self.get_cord = get_cord
+        self.max_items = max_items
+        self.max_depth = max_depth
     
+    def init(self, item):
+        self.depth = -1
+        self.p = self.get_cord(item)
+        self.item = item
+    
+    def enterBranch(self, branch):
+        self.depth += 1
+        return self.p and branch.area.contains(self.p)
+    
+    def leaveBranch(self, branch):
+        self.depth -= 1
+    
+    def visitLeaf(self, leaf):
+        self.depth += 1
+        if leaf.area.contains(self.p):
+            self.splitInsert(leaf)
+            raise StopIteration()
+        self.depth -= 1
+    
+    def splitInsert(self, leaf):
+        if self.max_items and len(leaf.items) >= self.max_items\
+        and (not self.max_depth or self.depth < self.max_depth):
+            br = self.split(leaf)
+            self.depth -= 1
+            br.accept(self)
+        else:
+            self.finalInsert(leaf, self.p, self.item)
+    
+    def split(self, leaf):
+        br = leaf.split()
+        
+        for i in leaf.items:
+            p = self.get_cord(i)
+            for q in br.children:
+                if q.area.contains(p):
+                    q.insert(p, i)
+                    break
+        
+        return br
+    
+    def finalInsert(self, leaf, p, item):
+        leaf.insert(p, item)
+
+#====================================================
+
+class PrinterVisitor(QuadTreeVisitor):
     def __init__(self):
         self.depth = -1
         self.str = ""
 
-    def EnterSection(self, section):
+    def enterBranch(self, branch):
         self.depth += 1
-        self.str += "%s %s\n" % ('\t'*self.depth, section)
+        self.str += "%s %s\n" % ('\t'*self.depth, branch)
         return True
 
-    def LeaveSection(self, section):
+    def leaveBranch(self, branch):
         self.depth -= 1
 
-    def VisitTerminal(self, terminal):
-        self.str += "%s %s\n" % ('\t'*(self.depth+1), terminal)
-        self.str += '\t'*(self.depth+2) + str(terminal.Items) + '\n'
-
-#====================================================
-
-class QuadTree(object):
-    
-    def __init__(self, area, terminal_size, agent):
-        self.Agent = agent
-        self.Root = QuadSection(self, area, Quater.ROOT, None)
-        self.terminal_size = terminal_size
-    
-    def getTerminalSize(self):
-        return self.terminal_size
-    
-    def setTerminalSize(self, value):
-        self.terminal_size = value
-        self.Clear()
-    
-    def Clear(self):
-        self.Root = QuadSection(self, self.Root.Area, Quater.ROOT, None)
-        pass
-    
-    def Insert(self, item):
-        inserter = QuadTreeInserter(item)
-        self.Accept(inserter)
-    
-    def Accept(self, visitor):
-        self.Root.Accept(visitor)
-    
-    def __str__(self):
-        p = QuadTreePrinter()
-        self.Accept(p)
-        return p.str
-
-#====================================================
-
-if __name__ == "__main__":
-    qt = QuadTree( (0, 0, 8, 8), 1, lambda i: i )
-    qt.Insert( (0.5, 0.5) )
-    qt.Insert( (4.5, 4.5) )
-    print qt
+    def visitLeaf(self, leaf):
+        self.str += "%s %s\n" % ('\t'*(self.depth+1), leaf)
+        self.str += '\t'*(self.depth+2) + str(leaf.items) + '\n'
 
