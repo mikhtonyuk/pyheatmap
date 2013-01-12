@@ -28,7 +28,7 @@ class Heatmap:
         self.opacity = opacity
         self.size =  background.size if background else size
         self.palette = self._loadPalette(palette)
-        self.background = background
+        self.background = background or (255,255,255)
 
         dot = self._buildDot(self.dotsize)
         mask = self._buildMask(dot)
@@ -172,12 +172,16 @@ if __name__ == '__main__':
     if args.file:
         points = read_csv(args.file)
     else:
-        points = read_stdin()
+        import sys
+        points = read_stream(sys.stdin)
     
-    img = Heatmap().create(points=points, palette=args.palette, size=size,\
-                           dotsize=args.dotsize or None, opacity=args.opacity,\
-                           background=args.background)
-    
-    img.save(args.output, 'JPEG')
+    try:
+        img = Heatmap().create(points=points, palette=args.palette, size=size,\
+                               dotsize=args.dotsize or None, opacity=args.opacity,\
+                               background=args.background)
+        
+        img.save(args.output, 'JPEG')
+    except KeyboardInterrupt:
+        pass
 
 
