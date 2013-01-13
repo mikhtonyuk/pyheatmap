@@ -71,6 +71,16 @@ class QuedTreeTest(unittest.TestCase):
         
         self.assertEqual(qt.depth, 3)
     
+    def testMinSize(self):
+        qt = QuadTree((0,0,1,1), max_items=1, min_size=0.4)
+        
+        import random
+        for _ in range(100):
+            x,y = random.random(), random.random()
+            qt.insert((x,y))
+        
+        self.assertEqual(qt.depth, 2)
+    
     def testItemRemoval(self):
         qt = QuadTree((0,0,1,1))
         qt.insert((0.1,0.1))

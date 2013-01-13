@@ -19,6 +19,14 @@ class Rect(object):
         if self._r[0] > self._r[2] or self._r[1] > self._r[3]:
             raise Exception("Invalid rect %s" % (self._r))
     
+    @property
+    def width(self):
+        return self._r[2] - self._r[0]
+    
+    @property
+    def height(self):
+        return self._r[3] - self._r[1]
+    
     def contains(self, p):
         r = self._r
         return p[0] >= r[0] and p[0] <= r[2] and p[1] >= r[1] and p[1] <= r[3]
@@ -124,6 +132,9 @@ class QuadLeaf(QuadNode):
         self._items.remove(item)
         return l != len(self._items)
     
+    def clear(self):
+        self._items = []
+    
     def split(self):
         br = QuadBranch(self.parent, self.area)
         self.parent._wasSplit(self, br)
@@ -167,6 +178,9 @@ class QuadBranch(QuadNode):
     def count(self):
         return sum( ( c.count for c in self._children ) )
     
+    def clear(self):
+        self._children = [QuadLeaf(self, Quater.ofArea(self.area, q)) for q in range(4)]
+    
     def merge(self):
         leaf = QuadLeaf(self.parent, self.area)
         self.parent._wasMerged(self, leaf)
@@ -181,87 +195,6 @@ class QuadBranch(QuadNode):
     
     def __str__(self):
         return "branch [%s] area %s" % (Quater.toString(self.quater), self.area)
-
-#====================================================
-
-class QuadTree(object):
-    def __init__(self, rect=None, getcoord = lambda x: x, max_items=100, max_depth=0, min_items=0):
-        """QuadTree:
-        rect - quad tree area limits (x0,y0,x1,y1)
-        getcoord - callabe that extracts coordinates from items, should return (x,y)
-        max_items - number of items in leaf node when it will be subdivided
-        max_depth - limits tree depth
-        min_items - number of items under lowest order branch node when it will be merged into leaf
-        """
-        
-        self.max_items = max_items
-        self.max_depth = max_depth
-        self.min_items = min_items
-        
-        self._getcoord = getcoord
-        self._root = QuadLeaf(self, Rect(rect) if rect else Rect.INF)
-        self._inserter = InsertionVisitor(self._getcoord, self.max_items, self.max_depth)
-        self._remover = RemovalVisitor(self._getcoord, self.min_items)
-    
-    @property
-    def root(self):
-        return self._root
-    
-    @property
-    def area(self):
-        return self._root.area
-    
-    @property
-    def items(self):
-        return self._root.items
-    
-    @property
-    def count(self):
-        return self._root.count
-    
-    @property
-    def depth(self):
-        v = DepthProbeVisitor()
-        self.accept(v)
-        return v.max_depth
-    
-    def insert(self, item):
-        self._inserter.init(item)
-        self.accept(self._inserter)
-        return self._inserter.depth
-    
-    # TODO: optimize merging checks
-    # TODO: add optimize method
-    def remove(self, item):
-        self._remover.init(item)
-        self.accept(self._remover)
-        return self._remover.depth != 0
-    
-    def clear(self):
-        self._root = QuadLeaf(self, self.area)
-    
-    def accept(self, visitor):
-        try:
-            self._root.accept(visitor)
-        except StopIteration:
-            pass
-    
-    def _quater(self, node):
-        assert node == self.root
-        return Quater.ROOT
-    
-    def _wasSplit(self, leaf, br):
-        assert leaf == self._root
-        self._root = br
-    
-    def _wasMerged(self, br, leaf):
-        assert br == self._root
-        self._root = leaf
-    
-    def __str__(self):
-        v = PrinterVisitor()
-        self.accept(v)
-        return v.str
 
 #====================================================
 
@@ -296,13 +229,14 @@ class DepthProbeVisitor(object):
 #====================================================
 
 class InsertionVisitor(QuadTreeVisitor):
-    def __init__(self, get_cord, max_items, max_depth):
+    def __init__(self, get_cord, max_items, max_depth, min_size):
         self.depth = 0
         self.item = None
         
         self.get_cord = get_cord
         self.max_items = max_items
         self.max_depth = max_depth
+        self.min_size = min_size
     
     def init(self, item):
         self.depth = 0
@@ -326,8 +260,9 @@ class InsertionVisitor(QuadTreeVisitor):
         self.depth -= 1
     
     def splitInsert(self, leaf):
-        if self.max_items and len(leaf.items) >= self.max_items\
-        and (not self.max_depth or self.depth < self.max_depth):
+        if self.max_items and len(leaf.items) >= self.max_items \
+        and (not self.max_depth or self.depth < self.max_depth) \
+        and (not self.min_size or (leaf.area.width * 0.5 >= self.min_size and leaf.area.height * 0.5 >= self.min_size)):
             br = self.split(leaf)
             self.depth -= 1
             br.accept(self)
@@ -413,4 +348,92 @@ class PrinterVisitor(QuadTreeVisitor):
     def visitLeaf(self, leaf):
         self.str += "%s%s\n" % ('  '*(self.depth+1), leaf)
         self.str += "%s%s\n" % ('  '*(self.depth+2), leaf.items)
+
+#====================================================
+
+class QuadTree(object):
+    def __init__(self, rect=None, getcoord = lambda x: x, 
+                 max_items=100, max_depth=0, min_size=0, min_items=0,
+                 inserter=InsertionVisitor, remover=RemovalVisitor):
+        """QuadTree:
+        rect - quad tree area limits (x0,y0,x1,y1)
+        getcoord - callabe that extracts coordinates from items, should return (x,y)
+        max_items - number of items in leaf node when it will be subdivided
+        max_depth - limits tree depth
+        min_size - limits tree by smallest area height or width
+        min_items - number of items under lowest order branch node when it will be merged into leaf
+        """
+        
+        self.max_items = max_items
+        self.max_depth = max_depth
+        self.min_size = min_size
+        self.min_items = min_items
+        
+        self._getcoord = getcoord
+        self._root = QuadLeaf(self, Rect(rect) if rect else Rect.INF)
+        self._inserter = InsertionVisitor(self._getcoord, self.max_items, self.max_depth, self.min_size)
+        self._remover = RemovalVisitor(self._getcoord, self.min_items)
+    
+    @property
+    def root(self):
+        return self._root
+    
+    @property
+    def area(self):
+        return self._root.area
+    
+    @property
+    def items(self):
+        return self._root.items
+    
+    @property
+    def count(self):
+        return self._root.count
+    
+    @property
+    def depth(self):
+        v = DepthProbeVisitor()
+        self.accept(v)
+        return v.max_depth
+    
+    def insert(self, item):
+        self._inserter.init(item)
+        self.accept(self._inserter)
+        return self._inserter.depth
+    
+    # TODO: optimize merging checks
+    # TODO: add optimize method
+    def remove(self, item):
+        self._remover.init(item)
+        self.accept(self._remover)
+        return self._remover.depth != 0
+    
+    def clear(self):
+        self._root = QuadLeaf(self, self.area)
+    
+    def accept(self, visitor):
+        try:
+            self._root.accept(visitor)
+        except StopIteration:
+            pass
+    
+    def _quater(self, node):
+        assert node == self.root
+        return Quater.ROOT
+    
+    def _wasSplit(self, leaf, br):
+        assert leaf == self._root
+        self._root = br
+    
+    def _wasMerged(self, br, leaf):
+        assert br == self._root
+        self._root = leaf
+    
+    def __str__(self):
+        v = PrinterVisitor()
+        self.accept(v)
+        return v.str
+
+#====================================================
+
 
