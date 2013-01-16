@@ -371,8 +371,8 @@ class QuadTree(object):
         
         self._getcoord = getcoord
         self._root = QuadLeaf(self, Rect(rect) if rect else Rect.INF)
-        self._inserter = InsertionVisitor(self._getcoord, self.max_items, self.max_depth, self.min_size)
-        self._remover = RemovalVisitor(self._getcoord, self.min_items)
+        self._inserter = inserter(self._getcoord, self.max_items, self.max_depth, self.min_size)
+        self._remover = remover(self._getcoord, self.min_items)
     
     @property
     def root(self):

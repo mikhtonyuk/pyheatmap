@@ -48,21 +48,26 @@ if __name__ == '__main__':
     
     import argparse
     parser = argparse.ArgumentParser(description='Accumulates events heat with specified precision and outputs the result')
-    parser.add_argument('--area', dest="area", help="bounding rect of even coordinates (x0,y0,x1,y1)", default='0,0,1,1')
-    parser.add_argument('--error', dest="error", help="maximum error allowed", type=float, default=0.001)
-    parser.add_argument('--out', dest="output", help="specifies output file name", default=None)
+    parser.add_argument('--area', dest="area", help="bounding rect of event coordinates (x0,y0,x1,y1)", default='0,0,1,1')
+    parser.add_argument('--error', dest="error", help="maximum error allowed", type=float, default=0.01)
     parser.add_argument('file', nargs='*', help="the source CSV file")
     
     args = parser.parse_args()
     area = tuple(map(float, args.area.split(',')))
-    out = args.output or sys.stdout
     points = read_csv(args.file) if args.file else read_stream(sys.stdin)
     
     try:
         qt = QuadTree(area, lambda x: (x[0],x[1]), min_size=args.error, inserter=HeatAccumulatingInserter)
+        
         for p in points:
             qt.insert(p)
-        print qt
+        
+        max_heat = max([i[2] for i in qt.items])
+        
+        for p in qt.items:
+            x,y,w = p
+            print '%s,%s,%s' % (x,y,w/max_heat)
+        
     except KeyboardInterrupt:
         pass
 

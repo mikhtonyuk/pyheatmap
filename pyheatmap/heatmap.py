@@ -84,7 +84,8 @@ class Heatmap:
         ds_2 = dot.size[0] / 2;
         
         for pnt in self.points:
-            x, y = pnt[0:2]
+            x = int(pnt[0] * self.size[0])
+            y = int((1.0 -pnt[1]) * self.size[1])
             w = pnt[2] if len(pnt) > 2 else 1.0
             
             box = (x - ds_2, y - ds_2, x - ds_2 + self.dotsize, y - ds_2 + self.dotsize)
@@ -135,6 +136,8 @@ class Heatmap:
 
 
 if __name__ == '__main__':
+    import sys, argparse
+    
     def read_stream(s):
         while True:
             l = s.readline().strip()
@@ -142,7 +145,6 @@ if __name__ == '__main__':
                 break
             
             vals = map(float, l.split(','))
-            vals[0],vals[1] = int(vals[0]),int(vals[1])
             yield tuple(vals)
     
     def read_csv(filenames):
@@ -151,8 +153,6 @@ if __name__ == '__main__':
                 for v in read_stream(f):
                     yield v
     
-    
-    import argparse
     parser = argparse.ArgumentParser(description='Draws heatmaps from CSV files or stdin')
     parser.add_argument('--palette', dest="palette", help="palette file for color mapping", default='resources/palette.png')
     parser.add_argument('--bg', dest="background", help="background file name")
@@ -163,17 +163,12 @@ if __name__ == '__main__':
     parser.add_argument('file', nargs='*', help="the source CSV file")
 
     args = parser.parse_args()
+    size = tuple(map(int, args.size.split(',')))
     
     if args.background:
         args.background = Image.open(args.background)
-    size = tuple(map(int, args.size.split(',')))
     
-    points = None
-    if args.file:
-        points = read_csv(args.file)
-    else:
-        import sys
-        points = read_stream(sys.stdin)
+    points = read_csv(args.file) if args.file else read_stream(sys.stdin)
     
     try:
         img = Heatmap().create(points=points, palette=args.palette, size=size,\
