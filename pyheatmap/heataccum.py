@@ -1,16 +1,16 @@
-from partition.qtree import QuadTree, InsertionVisitor
+from partition.grid import Grid
 import sys
 
 #====================================================
 
-class HeatAccumulatingInserter(InsertionVisitor):
-    def finalInsert(self, leaf, p, item):
-        leaf.insert(item)
-        # for leaf node that will never split collapse all items into one
-        if leaf.area.width * 0.5 < self.min_size or leaf.area.height * 0.5 < self.min_size:
-            merged = self.mergeItems(leaf.items)
-            leaf.clear()
-            leaf.insert(merged)
+class HeatGrid(Grid):
+    def insert(self, item):
+        where = Grid.insert(self, item)
+        if where:
+            cell = self[where]
+            merged = self.mergeItems(cell.items)
+            cell.clear()
+            cell.insert(merged)
     
     def mergeItems(self, items):
         # weighted average of coords and sum of weights
@@ -49,22 +49,25 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description='Accumulates events heat with specified precision and outputs the result')
     parser.add_argument('--area', dest="area", help="bounding rect of event coordinates (x0,y0,x1,y1)", default='0,0,1,1')
-    parser.add_argument('--error', dest="error", help="maximum error allowed", type=float, default=0.01)
+    parser.add_argument('--grid', dest="grid", help="Number of x,y grid cells for subdivision", default='100,100')
+    parser.add_argument('--error', dest="error", help="maximum error allowed", type=float, default=None)
     parser.add_argument('file', nargs='*', help="the source CSV file")
     
     args = parser.parse_args()
     area = tuple(map(float, args.area.split(',')))
+    dims = tuple(map(int, args.grid.split(','))) if not args.error else None
+    error = args.error
     points = read_csv(args.file) if args.file else read_stream(sys.stdin)
     
     try:
-        qt = QuadTree(area, lambda x: (x[0],x[1]), min_size=args.error, inserter=HeatAccumulatingInserter)
+        grid = HeatGrid(area, lambda x: (x[0],x[1]), cell_size=error, cells_num=dims)
         
         for p in points:
-            qt.insert(p)
+            grid.insert(p)
         
-        max_heat = max([i[2] for i in qt.items])
+        max_heat = max([i[2] for i in grid.items])
         
-        for p in qt.items:
+        for p in grid.items:
             x,y,w = p
             print '%s,%s,%s' % (x,y,w/max_heat)
         

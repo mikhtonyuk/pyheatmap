@@ -1,4 +1,4 @@
-from qtree import *
+from pyheatmap.partition.qtree import *
 from mock import patch, call
 
 import unittest
@@ -20,7 +20,7 @@ class QuedTreeTest(unittest.TestCase):
         self.assertEqual(qt.root.quater, Quater.ROOT)
         self.assertEqual(qt.root.area, (0,0,10,10))
     
-    @patch('qtree.QuadTreeVisitor')
+    @patch('pyheatmap.partition.qtree.QuadTreeVisitor')
     def testVisitor(self, MockVisitor):
         qt = QuadTree()
         qt._root = QuadBranch(qt, Rect.INF)
